@@ -1,0 +1,22 @@
+{
+  "name": "seefix-worker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "SEEFIX background worker: runs delivery/housekeeping jobs (first job: realtime-dispatch, OutboxEvents -> Pusher).",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "once": "node src/index.js --once",
+    "test": "node --test",
+    "sync:check": "node scripts/sync-check.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.6.1",
+    "pg": "^8.16.3",
+    "pusher": "^5.2.0"
+  },
+  "license": "MIT"
+}

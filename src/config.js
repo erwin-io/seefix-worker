@@ -23,6 +23,11 @@ export const config = Object.freeze({
 
   // Jobs: each is opt-in, so one machine can run only the jobs it should.
   jobRealtimeDispatch: onOff("JOB_REALTIME_DISPATCH"),
+  jobAgentRetry: onOff("JOB_AGENT_RETRY"),
+
+  agentRetryIntervalMs: intEnv("AGENT_RETRY_INTERVAL_MS", 60000, 10000),
+  agentRetryMaxAttempts: intEnv("AGENT_RETRY_MAX_ATTEMPTS", 3, 1),
+  agentRetryBaseMinutes: intEnv("AGENT_RETRY_BASE_MINUTES", 2, 1),
 
   outboxPollMs: intEnv("OUTBOX_POLL_MS", 2000, 200),
   outboxBatchSize: intEnv("OUTBOX_BATCH_SIZE", 10, 1),
@@ -37,9 +42,11 @@ export const config = Object.freeze({
 /** Fails fast with every problem at once; only checks what enabled jobs need. */
 export function validateConfig(c = config) {
   const errors = [];
-  if (!c.jobRealtimeDispatch) errors.push("No job is enabled. Set JOB_REALTIME_DISPATCH=on.");
+  if (!c.jobRealtimeDispatch && !c.jobAgentRetry) errors.push("No job is enabled. Set JOB_REALTIME_DISPATCH=on and/or JOB_AGENT_RETRY=on.");
+  if ((c.jobRealtimeDispatch || c.jobAgentRetry) && !c.databaseUrl) {
+    errors.push("DATABASE_URL is required (the same database seefix-api and seefix-agents use).");
+  }
   if (c.jobRealtimeDispatch) {
-    if (!c.databaseUrl) errors.push("DATABASE_URL is required (the same database seefix-api and seefix-agents use).");
     for (const [name, value] of [["PUSHER_APP_ID", c.pusherAppId], ["PUSHER_KEY", c.pusherKey], ["PUSHER_SECRET", c.pusherSecret], ["PUSHER_CLUSTER", c.pusherCluster]]) {
       if (!value) errors.push(`${name} is required for JOB_REALTIME_DISPATCH.`);
     }

@@ -7,9 +7,10 @@ import { config, validateConfig } from "./config.js";
 import { pool } from "./database.js";
 import * as agentRetry from "./jobs/agent-retry/index.js";
 import * as realtimeDispatch from "./jobs/realtime-dispatch/index.js";
+import * as uploadCleanup from "./jobs/upload-cleanup/index.js";
 
 // Add new jobs here; each exports name, isEnabled(), start() -> stop, runOnce() -> summary.
-const JOBS = [realtimeDispatch, agentRetry];
+const JOBS = [realtimeDispatch, agentRetry, uploadCleanup];
 
 async function main() {
   validateConfig(config);

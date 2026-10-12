@@ -8,6 +8,7 @@ the shared PostgreSQL database and external services.
 |---|---|---|
 | `realtime-dispatch` | `JOB_REALTIME_DISPATCH=on` | delivers `dbo."OutboxEvents"` rows (`Transport='PUSHER'`) to Pusher private channels, so the web admin and apps update live |
 | `agent-retry` | `JOB_AGENT_RETRY=on` | puts `FAILED` Agent work (report assessment, completion check) back to `PENDING` after a backoff, up to an attempt cap, so short outages recover by themselves |
+| `upload-cleanup` | `JOB_UPLOAD_CLEANUP=on` | deletes direct-to-Cloudinary uploads (tagged `seefix-pending`) that were never attached to a report, work order or procurement document after `UPLOAD_CLEANUP_MIN_AGE_HOURS` (24 h); attached ones just lose the tag |
 
 ## How Agent work flows
 seefix-api never calls the Agent to start an assessment. Everything goes through the database queue:
@@ -19,14 +20,16 @@ API saves report / completion as PENDING  ->  Agent claims PENDING work (every ~
   order is still `COMPLETION_SUBMITTED` (never after the supervisor decided).
 - **Backoff:** `AGENT_RETRY_BASE_MINUTES × 2^(attempt-1)` after the failure. The defaults (2, then 4 minutes) give 3 attempts in total.
 - **Limit:** after `AGENT_RETRY_MAX_ATTEMPTS` attempts (counted by the Agent on each claim), the work stays `FAILED` for a person.
-- **Audit:** each re-queue appends `Automatically requeued by seefix-worker after failed attempt N.` to the item's last error;
-  the original error is kept.
+- **Audit:** each re-queue appends `Automatically requeued by seefix-worker after failed attempt N.` to the item's last
+  error. The Agent clears the last error when it claims the work again, so the note only shows until the next attempt
+  starts; a later failure records that attempt's own error.
 - **Safe with several workers:** each update re-checks its conditions under the row lock.
 
 ## Requirements
 - Node.js 20+.
 - The **same database** as seefix-api and seefix-agents (e.g. Neon).
-- The **same Pusher app** as seefix-api.
+- The **same Pusher app** as seefix-api (for `realtime-dispatch`).
+- The **same Cloudinary account** as seefix-api (for `upload-cleanup`).
 
 ## Setup
 ```
@@ -91,7 +94,8 @@ When this worker runs `realtime-dispatch`, the API doesn't need its own dispatch
 
 ## Monitoring
 - **Logs:** each job's start line; realtime-dispatch warns when events move to `FAILED` or are skipped as too old
-  (`OUTBOX_MAX_AGE_MINUTES`); agent-retry logs every re-queue (`Re-queued report RPT-… (after attempt 1)`).
+  (`OUTBOX_MAX_AGE_MINUTES`); agent-retry logs every re-queue (`Re-queued report RPT-… (after attempt 1)`); upload-cleanup logs every deleted
+  upload by public ID.
 - **Database:**
   ```sql
   SELECT "Status", COUNT(*) FROM dbo."OutboxEvents" WHERE "Transport"='PUSHER' GROUP BY 1;

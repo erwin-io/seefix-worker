@@ -21,13 +21,22 @@ export const config = Object.freeze({
   pusherSecret: String(process.env.PUSHER_SECRET || ""),
   pusherCluster: String(process.env.PUSHER_CLUSTER || "").trim(),
 
+  cloudinaryCloudName: String(process.env.CLOUDINARY_CLOUD_NAME || "").trim(),
+  cloudinaryApiKey: String(process.env.CLOUDINARY_API_KEY || "").trim(),
+  cloudinaryApiSecret: String(process.env.CLOUDINARY_API_SECRET || ""),
+
   // Jobs: each is opt-in, so one machine can run only the jobs it should.
   jobRealtimeDispatch: onOff("JOB_REALTIME_DISPATCH"),
   jobAgentRetry: onOff("JOB_AGENT_RETRY"),
+  jobUploadCleanup: onOff("JOB_UPLOAD_CLEANUP"),
 
   agentRetryIntervalMs: intEnv("AGENT_RETRY_INTERVAL_MS", 60000, 10000),
   agentRetryMaxAttempts: intEnv("AGENT_RETRY_MAX_ATTEMPTS", 3, 1),
   agentRetryBaseMinutes: intEnv("AGENT_RETRY_BASE_MINUTES", 2, 1),
+
+  uploadCleanupIntervalMs: intEnv("UPLOAD_CLEANUP_INTERVAL_MS", 3600000, 60000),
+  // Upload signatures last 1 hour; an upload may be attached any time after that, so keep a wide margin.
+  uploadCleanupMinAgeHours: intEnv("UPLOAD_CLEANUP_MIN_AGE_HOURS", 24, 2),
 
   outboxPollMs: intEnv("OUTBOX_POLL_MS", 2000, 200),
   outboxBatchSize: intEnv("OUTBOX_BATCH_SIZE", 10, 1),
@@ -42,8 +51,9 @@ export const config = Object.freeze({
 /** Fails fast with every problem at once; only checks what enabled jobs need. */
 export function validateConfig(c = config) {
   const errors = [];
-  if (!c.jobRealtimeDispatch && !c.jobAgentRetry) errors.push("No job is enabled. Set JOB_REALTIME_DISPATCH=on and/or JOB_AGENT_RETRY=on.");
-  if ((c.jobRealtimeDispatch || c.jobAgentRetry) && !c.databaseUrl) {
+  const anyJob = c.jobRealtimeDispatch || c.jobAgentRetry || c.jobUploadCleanup;
+  if (!anyJob) errors.push("No job is enabled. Set JOB_REALTIME_DISPATCH, JOB_AGENT_RETRY and/or JOB_UPLOAD_CLEANUP to on.");
+  if (anyJob && !c.databaseUrl) {
     errors.push("DATABASE_URL is required (the same database seefix-api and seefix-agents use).");
   }
   if (c.jobRealtimeDispatch) {
@@ -53,6 +63,11 @@ export function validateConfig(c = config) {
     // A batch is published sequentially under one lease; the lease must outlive the worst-case batch.
     if (c.outboxLeaseSeconds * 1000 <= c.outboxBatchSize * c.outboxPublishTimeoutMs) {
       errors.push("OUTBOX_LEASE_SECONDS must exceed OUTBOX_BATCH_SIZE x OUTBOX_PUBLISH_TIMEOUT_MS.");
+    }
+  }
+  if (c.jobUploadCleanup) {
+    for (const [name, value] of [["CLOUDINARY_CLOUD_NAME", c.cloudinaryCloudName], ["CLOUDINARY_API_KEY", c.cloudinaryApiKey], ["CLOUDINARY_API_SECRET", c.cloudinaryApiSecret]]) {
+      if (!value) errors.push(`${name} is required for JOB_UPLOAD_CLEANUP.`);
     }
   }
   if (errors.length) throw new Error(errors.join("\n"));

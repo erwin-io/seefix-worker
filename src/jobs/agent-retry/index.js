@@ -13,6 +13,7 @@
  */
 import { config } from "../../config.js";
 import { query } from "../../database.js";
+import { repeat } from "../../repeat.js";
 
 export const name = "agent-retry";
 export const isEnabled = () => config.jobAgentRetry;
@@ -53,25 +54,5 @@ export async function runOnce({ q = query, log = console } = {}) {
 /** Continuous mode: one pass every AGENT_RETRY_INTERVAL_MS. Returns stop(). Never throws into the caller. */
 export function start({ log = console, q = query } = {}) {
   log.log?.(`[${name}] Checking every ${config.agentRetryIntervalMs / 1000} s; up to ${config.agentRetryMaxAttempts} attempts, backoff from ${config.agentRetryBaseMinutes} min.`);
-  let stopped = false;
-  let timer = null;
-  let failures = 0;
-  const tick = async () => {
-    if (stopped) return;
-    try {
-      await runOnce({ q, log });
-      if (failures) log.log?.(`[${name}] Recovered after ${failures} failed pass(es).`);
-      failures = 0;
-    } catch (error) {
-      failures += 1;
-      // Log the first failure and then at 2, 4, 8… consecutive failures (e.g. database unreachable).
-      if ((failures & (failures - 1)) === 0) log.warn?.(`[${name}] Pass failed (${failures} in a row): ${error?.message || error}`);
-    }
-    if (!stopped) timer = setTimeout(tick, config.agentRetryIntervalMs);
-  };
-  timer = setTimeout(tick, 0);
-  return () => {
-    stopped = true;
-    clearTimeout(timer);
-  };
+  return repeat(name, config.agentRetryIntervalMs, () => runOnce({ q, log }), log);
 }

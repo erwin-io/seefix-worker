@@ -26,19 +26,28 @@ API saves report / completion as PENDING  ->  Agent claims PENDING work (every ~
 - **Safe with several workers:** each update re-checks its conditions under the row lock.
 
 ## Requirements
-- Node.js 20+.
+- Git, and Node.js 20+ (22 LTS recommended; `node -v`).
 - The **same database** as seefix-api and seefix-agents (e.g. Neon).
 - The **same Pusher app** as seefix-api (for `realtime-dispatch`).
 - The **same Cloudinary account** as seefix-api (for `upload-cleanup`).
 
-## Setup
-```
-git clone https://github.com/erwin-io/seefix-worker.git
-cd seefix-worker
-npm ci
-copy .env.example .env      (cp on Linux/macOS)
-```
-Fill in `.env`: `DATABASE_URL`, `PUSHER_*` (for realtime-dispatch), and turn on the jobs this machine should run.
+## Setup (step by step)
+1. **Clone and install**
+   ```
+   git clone https://github.com/seefixmanagement/seefix-worker.git
+   cd seefix-worker
+   npm ci
+   copy .env.example .env      (cp on Linux/macOS)
+   ```
+2. **Fill in `.env`**
+   - `DATABASE_URL`: the same database as seefix-api. For Neon use the pooled host with `?sslmode=verify-full`
+     and set `DATABASE_SSLMODE=verify-full`.
+   - `PUSHER_*`: the same Pusher app as seefix-api (for `realtime-dispatch`).
+   - `CLOUDINARY_*`: the same account as seefix-api (only for `upload-cleanup`).
+   - Turn on the jobs this machine should run: `JOB_REALTIME_DISPATCH`, `JOB_AGENT_RETRY`, `JOB_UPLOAD_CLEANUP`.
+3. **Check it**: `npm test`, then `npm run once` (see below).
+4. **Run it continuously** with `npm start`, or install it as a service (below).
+5. **Tell seefix-api a worker is running**: see [Using it with seefix-api](#using-it-with-seefix-api).
 
 ## Run
 ```

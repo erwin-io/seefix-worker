@@ -29,6 +29,8 @@ export const config = Object.freeze({
   jobRealtimeDispatch: onOff("JOB_REALTIME_DISPATCH"),
   jobAgentRetry: onOff("JOB_AGENT_RETRY"),
   jobUploadCleanup: onOff("JOB_UPLOAD_CLEANUP"),
+  jobCacheChangeHints: onOff("JOB_CACHE_CHANGE_HINTS"),
+  jobReminders: onOff("JOB_REMINDERS"),
 
   agentRetryIntervalMs: intEnv("AGENT_RETRY_INTERVAL_MS", 60000, 10000),
   agentRetryMaxAttempts: intEnv("AGENT_RETRY_MAX_ATTEMPTS", 3, 1),
@@ -37,6 +39,16 @@ export const config = Object.freeze({
   uploadCleanupIntervalMs: intEnv("UPLOAD_CLEANUP_INTERVAL_MS", 3600000, 60000),
   // Upload signatures last 1 hour; an upload may be attached any time after that, so keep a wide margin.
   uploadCleanupMinAgeHours: intEnv("UPLOAD_CLEANUP_MIN_AGE_HOURS", 24, 2),
+
+  cacheHintsPollMs: intEnv("CACHE_HINTS_POLL_MS", 2000, 500),
+  // Pusher outage: wait base x 2^(failures-1), at most max, before trying again (versions coalesce meanwhile).
+  cacheHintsBackoffBaseMs: intEnv("CACHE_HINTS_BACKOFF_BASE_MS", 2000, 100),
+  cacheHintsBackoffMaxMs: intEnv("CACHE_HINTS_BACKOFF_MAX_MS", 60000, 1000),
+
+  remindersPollMs: intEnv("REMINDERS_POLL_MS", 15000, 1000),
+  remindersBatchSize: intEnv("REMINDERS_BATCH_SIZE", 20, 1),
+  // A claimed reminder whose worker died is re-claimed after this lease (restart / outage recovery).
+  remindersLeaseSeconds: intEnv("REMINDERS_LEASE_SECONDS", 120, 30),
 
   outboxPollMs: intEnv("OUTBOX_POLL_MS", 2000, 200),
   outboxBatchSize: intEnv("OUTBOX_BATCH_SIZE", 10, 1),
@@ -51,15 +63,20 @@ export const config = Object.freeze({
 /** Fails fast with every problem at once; only checks what enabled jobs need. */
 export function validateConfig(c = config) {
   const errors = [];
-  const anyJob = c.jobRealtimeDispatch || c.jobAgentRetry || c.jobUploadCleanup;
-  if (!anyJob) errors.push("No job is enabled. Set JOB_REALTIME_DISPATCH, JOB_AGENT_RETRY and/or JOB_UPLOAD_CLEANUP to on.");
+  const anyJob = c.jobRealtimeDispatch || c.jobAgentRetry || c.jobUploadCleanup || c.jobCacheChangeHints || c.jobReminders;
+  if (!anyJob) {
+    errors.push("No job is enabled. Set JOB_REALTIME_DISPATCH, JOB_AGENT_RETRY, JOB_UPLOAD_CLEANUP, JOB_CACHE_CHANGE_HINTS and/or JOB_REMINDERS to on.");
+  }
   if (anyJob && !c.databaseUrl) {
     errors.push("DATABASE_URL is required (the same database seefix-api and seefix-agents use).");
   }
-  if (c.jobRealtimeDispatch) {
+  for (const [on, job] of [[c.jobRealtimeDispatch, "JOB_REALTIME_DISPATCH"], [c.jobCacheChangeHints, "JOB_CACHE_CHANGE_HINTS"]]) {
+    if (!on) continue;
     for (const [name, value] of [["PUSHER_APP_ID", c.pusherAppId], ["PUSHER_KEY", c.pusherKey], ["PUSHER_SECRET", c.pusherSecret], ["PUSHER_CLUSTER", c.pusherCluster]]) {
-      if (!value) errors.push(`${name} is required for JOB_REALTIME_DISPATCH.`);
+      if (!value) errors.push(`${name} is required for ${job}.`);
     }
+  }
+  if (c.jobRealtimeDispatch) {
     // A batch is published sequentially under one lease; the lease must outlive the worst-case batch.
     if (c.outboxLeaseSeconds * 1000 <= c.outboxBatchSize * c.outboxPublishTimeoutMs) {
       errors.push("OUTBOX_LEASE_SECONDS must exceed OUTBOX_BATCH_SIZE x OUTBOX_PUBLISH_TIMEOUT_MS.");

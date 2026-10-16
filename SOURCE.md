@@ -9,6 +9,12 @@ Change them in seefix-api first (with review), then copy them over:
 | `src/jobs/realtime-dispatch/channels.js` | `src/realtime/channels.js` | `main` @ `eb1f3e1` |
 | `tests/outbox-dispatcher.test.js`, `tests/channels.test.js` | `tests/outbox-dispatcher.test.js`, `tests/realtime-channels.test.js` | same (import paths adjusted) |
 
+Two smaller pieces are kept in step but are not file copies:
+- `src/jobs/cache-change-hints/domains.js` `DOMAINS_BY_ROLE` must equal seefix-api `src/routes/sync.js` `DOMAINS_BY_ROLE`
+  (compared by `npm run sync:check`).
+- `src/jobs/reminders/notifications.js` uses the same SQL and dedupe rules as seefix-api `src/services/notifications.js`
+  `createNotification()` / `insertOutbox()` (checked by review, and by the live reminders test).
+
 `channels.js` also contains `canSubscribe()`, which the worker doesn't use; it's kept so the file stays identical.
 
 Check for drift (fails if either file differs from seefix-api `main`):

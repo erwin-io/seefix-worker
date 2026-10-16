@@ -6,11 +6,13 @@
 import { config, validateConfig } from "./config.js";
 import { pool } from "./database.js";
 import * as agentRetry from "./jobs/agent-retry/index.js";
+import * as cacheChangeHints from "./jobs/cache-change-hints/index.js";
 import * as realtimeDispatch from "./jobs/realtime-dispatch/index.js";
+import * as reminders from "./jobs/reminders/index.js";
 import * as uploadCleanup from "./jobs/upload-cleanup/index.js";
 
 // Add new jobs here; each exports name, isEnabled(), start() -> stop, runOnce() -> summary.
-const JOBS = [realtimeDispatch, agentRetry, uploadCleanup];
+const JOBS = [realtimeDispatch, agentRetry, uploadCleanup, cacheChangeHints, reminders];
 
 async function main() {
   validateConfig(config);

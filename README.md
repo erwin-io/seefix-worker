@@ -9,6 +9,8 @@ the shared PostgreSQL database and external services.
 | `realtime-dispatch` | `JOB_REALTIME_DISPATCH=on` | delivers `dbo."OutboxEvents"` rows (`Transport='PUSHER'`) to Pusher private channels, so the web admin and apps update live |
 | `agent-retry` | `JOB_AGENT_RETRY=on` | puts `FAILED` Agent work (report assessment, completion check) back to `PENDING` after a backoff, up to an attempt cap, so short outages recover by themselves |
 | `upload-cleanup` | `JOB_UPLOAD_CLEANUP=on` | deletes direct-to-Cloudinary uploads (tagged `seefix-pending`) that were never attached to a report, work order or procurement document after `UPLOAD_CLEANUP_MIN_AGE_HOURS` (24 h); attached ones just lose the tag |
+| `cache-change-hints` | `JOB_CACHE_CHANGE_HINTS=on` | reads `dbo."CacheDomainVersions"` every 2 s and, when domains changed, publishes `data.changed {versions}` to `private-role-<ROLE>` (only domains that role may read); web clients then re-check `/api/sync/versions` at once |
+| `reminders` | `JOB_REMINDERS=on` | delivers due `dbo."AssistantReminders"` as an in-app notification (+ `notification.created` outbox row) for the recipient only; retries with backoff, recovers after an outage; idle until the reminders migration is applied |
 
 ## How Agent work flows
 seefix-api never calls the Agent to start an assessment. Everything goes through the database queue:
@@ -24,6 +26,26 @@ API saves report / completion as PENDING  ->  Agent claims PENDING work (every ~
   error. The Agent clears the last error when it claims the work again, so the note only shows until the next attempt
   starts; a later failure records that attempt's own error.
 - **Safe with several workers:** each update re-checks its conditions under the row lock.
+
+## Cache-change hints and reminders (Web Admin V2)
+**cache-change-hints** (seefix-api docs/V2_CACHE_SYNC.md §6):
+- The versions table is the durable change log. DB triggers bump it at COMMIT for every writer (API, Agent, this
+  worker), so nothing extra is written to OutboxEvents and the worker's own writes need no code.
+- Per role it publishes only the domains in `DOMAINS_BY_ROLE` (same as seefix-api `src/routes/sync.js`; `npm run sync:check`
+  compares them) and only when a number changed since that role's last accepted hint. Payload: names and numbers, no record data.
+- Pusher down: waits `CACHE_HINTS_BACKOFF_BASE_MS × 2^(n-1)` (max `CACHE_HINTS_BACKOFF_MAX_MS`); changes coalesce into one
+  hint. After a restart it publishes the current versions once (harmless: clients compare numbers).
+- Clients keep polling `/api/sync/versions`; hints only make them look sooner. seefix-api must authorize `private-role-<ROLE>`
+  in `/api/realtime/auth` (seefix-api PR "role channels") before clients can subscribe.
+
+**reminders** (seefix-api docs/V2_ASSISTANT.md §5):
+- Claims with `dbo."ClaimDueAssistantReminders"` (`FOR UPDATE SKIP LOCKED`, lease `REMINDERS_LEASE_SECONDS`), then per
+  reminder in one transaction: recipient re-check, notification + outbox row, `dbo."FinishAssistantReminder"` (fenced by attempt).
+  A cancel or a takeover by another worker rolls the delivery back.
+- Failure: back to SCHEDULED after 2^attempts minutes (max 60), FAILED after 5. Dedupe key `assistant-reminder:<id>`.
+- Times are UTC instants compared in PostgreSQL; the worker's and the session's time zone don't matter.
+- After an outage every overdue reminder is delivered on the next pass, oldest first. A reminder claimed by a crashed
+  worker is taken over after its lease.
 
 ## Requirements
 - Git, and Node.js 20+ (22 LTS recommended; `node -v`).
@@ -44,7 +66,8 @@ API saves report / completion as PENDING  ->  Agent claims PENDING work (every ~
      and set `DATABASE_SSLMODE=verify-full`.
    - `PUSHER_*`: the same Pusher app as seefix-api (for `realtime-dispatch`).
    - `CLOUDINARY_*`: the same account as seefix-api (only for `upload-cleanup`).
-   - Turn on the jobs this machine should run: `JOB_REALTIME_DISPATCH`, `JOB_AGENT_RETRY`, `JOB_UPLOAD_CLEANUP`.
+   - Turn on the jobs this machine should run: `JOB_REALTIME_DISPATCH`, `JOB_AGENT_RETRY`, `JOB_UPLOAD_CLEANUP`,
+     `JOB_CACHE_CHANGE_HINTS`, `JOB_REMINDERS`.
 3. **Check it**: `npm test`, then `npm run once` (see below).
 4. **Run it continuously** with `npm start`, or install it as a service (below).
 5. **Tell seefix-api a worker is running**: see [Using it with seefix-api](#using-it-with-seefix-api).
@@ -118,7 +141,8 @@ When this worker runs `realtime-dispatch`, the API doesn't need its own dispatch
 ## Tests
 ```
 npm test                                   # unit tests, no database needed
-SEEFIX_INTEGRATION_DB=1 DATABASE_URL=... npm test   # also the live agent-retry test (staged in a rolled-back transaction)
+SEEFIX_INTEGRATION_DB=1 DATABASE_URL=... npm test   # also the live tests (local/dev database only): agent-retry,
+                                           # cache-change-hints and reminders (they create and delete their own rows)
 ```
 
 ## Adding a job
